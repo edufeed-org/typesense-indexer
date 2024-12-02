@@ -2,27 +2,24 @@
   (:require [hato.websocket :as ws]
             [com.stuartsierra.component :as component]
             [cheshire.core :as json]
-            [typesense-indexer.components.typesense :as typesense])
+            [typesense-indexer.components.typesense :as typesense]
+            [nostr.core :as nostr])
   (:import [java.nio CharBuffer]))
 
 (defn init-request-30142 [wc last-event newest-event reason]
   (case reason
     "eose" (do
-             (ws/send! wc (json/generate-string ["CLOSE" "RAND"]))
-             (ws/send! wc (json/generate-string ["REQ" "RANDNEW" {:kinds [30142]
-                                                                  :since (:created_at @newest-event)}])))
-    "reconnect" (ws/send! wc (json/generate-string ["REQ" "RAND" {:kinds [1]
-                                                                  :limit 4
-                                                                  :until (:created_at @last-event)}]))
-    "init" (ws/send! wc (json/generate-string ["REQ" "RAND" {:kinds [30142]
-                                                             :limit 6000}]))))
+             (nostr/send! wc ["CLOSE" "RAND"])
+             (nostr/send! wc ["REQ" "RANDNEW" {:kinds [30142]
+                                               :since (:created_at @newest-event)}]))
+    "reconnect" (nostr/send! wc ["REQ" "RAND" {:kinds [1]
+                                               :limit 4
+                                               :until (:created_at @last-event)}])
+    "init" (nostr/send! wc ["REQ" "RAND" {:kinds [30142]
+                                          :limit 6000}])))
 
-(defn on-message-handler [last-parsed-event newest-event ws msg last?]
-  (let [msg-str (if (instance? CharBuffer msg)
-                  (str msg)
-                  msg)
-        parsed (json/parse-string msg-str true)
-        event (nth parsed 2 nil)]
+(defn on-message-handler [ws parsed last-parsed-event newest-event]
+  (let [event (nth parsed 2 nil)]
     (println (first parsed) (:id event))
     (when (and (= "EOSE" (first parsed))
                (not= (:created_at @last-parsed-event) (:created_at @newest-event)))
@@ -35,15 +32,10 @@
         (reset! last-parsed-event event)))))
 
 (defn create-websocket [url on-close-handler last-parsed-event newest-event]
-  @(ws/websocket url
-                 {:on-open (fn [ws]
-                             (println "Opened connection to url " url))
-                  :on-message (fn [ws msg last?]
-                                (on-message-handler last-parsed-event newest-event ws msg last?))
-                  :on-close (fn [ws status reason]
-                              ;; status 1000 für ws/close!, status 1006 bei connection lost
-                              (println "closed connection. status: " status " reason " reason)
-                              (on-close-handler status))}))
+  (nostr/connect url
+                 {:on-open-handler (fn [ws] (println "Opened connection to url " url))
+                  :on-message-handler (fn [ws msg] (on-message-handler ws msg last-parsed-event newest-event))
+                  :on-close-handler (fn [ws status reason] (on-close-handler status))}))
 
 (defrecord WebsocketConnection [url connection]
   component/Lifecycle
@@ -75,7 +67,7 @@
   (stop [component]
     (println ";; Stopping WebsocketConnection for url " url)
     (when-let [wc (:connection component)]
-      (ws/close! wc))
+      (nostr/close! wc))
     (assoc component :connection nil)))
 
 (defn new-websocket-connection [url]

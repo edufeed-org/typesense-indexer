@@ -2,7 +2,7 @@
   (:require [com.stuartsierra.component :as component]
             [cheshire.core :as json]
             [org.httpkit.client :as http]
-            [nostr-clj.edufeed :as nostr]))
+            [nostr.edufeed :as nostr]))
 
 ;; Typesense Client Configuration
 (def typesense-url "http://localhost:8108")
@@ -16,7 +16,9 @@
                           {:name "description" :type "string" :optional true}
                           {:name "keywords" :type "string[]" :optional true}
                           {:name "about.id" :type "string[]" :optional true}
-                          {:name "about.prefLabel" :type "object[]" :optional true}]})
+                          {:name "about.prefLabel" :type "object[]" :optional true}
+                          {:name "learningResourceType.id" :type "string[]" :optional true}
+                          {:name "learningResourceType.prefLabel" :type "object[]" :optional true}]})
 
 (defn insert-collection []
   (http/post (str typesense-url "/collections")
@@ -38,9 +40,7 @@
 ;; Utility function to insert a document into Typesense
 (defn insert-to-typesense [collection event]
   (let [url (str typesense-url "/collections/" collection "/documents?dirty_values=drop&action=upsert")
-        doc (nostr/convert-30142-to-nostr-amb event)
-        ; _ (println "converted doc " doc)
-        ]
+        doc (nostr/convert-30142-to-nostr-amb event false)]
     (http/post url
                {:body (json/encode doc)
                 :headers {"X-TYPESENSE-API-KEY" typesense-api-key
