@@ -4,11 +4,11 @@
    [com.stuartsierra.component :as component]
    ))
 
-(defn main []
-  (component/start (system/system))
+(defn -main []
+  (component/start (system/new-system))
   )
 
 
 (comment
-  (component/stop (system/system))
+  (component/stop (system/new-system))
   )

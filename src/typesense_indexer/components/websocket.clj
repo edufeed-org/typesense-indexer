@@ -57,8 +57,8 @@
                             (reconnect status)))))]
       (try
         (let [wc (create-websocket url reconnect last-parsed-event newest-event)]
-          (assoc component :connection wc)
-          (init-request-30142 wc last-parsed-event newest-event "init"))
+          (init-request-30142 wc last-parsed-event newest-event "init")
+          (assoc component :connection wc))
 
         (catch Exception e
           (println "Failed to start connection for " url)
