@@ -4,10 +4,6 @@
             [org.httpkit.client :as http]
             [nostr.edufeed :as nostr]))
 
-;; Typesense Client Configuration
-(def typesense-url "http://localhost:8108")
-(def typesense-api-key "xyz")
-
 (def amb-schema {:name "amb"
                  :enable_nested_fields true
                  :fields [{:name "name" :type "string"}
@@ -20,47 +16,50 @@
                           {:name "learningResourceType.id" :type "string[]" :optional true}
                           {:name "learningResourceType.prefLabel" :type "object[]" :optional true}]})
 
-(defn insert-collection []
-  (http/post (str typesense-url "/collections")
-             {:headers {"X-TYPESENSE-API-KEY" typesense-api-key
+(defn insert-collection [url api-key]
+  (http/post (str url "/collections")
+             {:headers {"X-TYPESENSE-API-KEY" api-key
                         "Content-Type" "application/json"}
               :body (json/generate-string amb-schema)}))
 
-(defn check-for-schema []
-  (http/get (str typesense-url "/collections")
-            {:headers {"X-TYPESENSE-API-KEY" typesense-api-key
+(defn check-for-schema [url api-key]
+  (http/get (str url "/collections")
+            {:headers {"X-TYPESENSE-API-KEY" api-key
                        "Content-Type" "application/json"}}
             (fn [{:keys [status headers body error opts]}]
               (if error
                 (println "Failed, exception is " error)
                 (when-not (some #(= "amb" (:name %))  (json/parse-string body true))
                   (do (println "AMB not found...inserting collection")
-                      (insert-collection)))))))
+                      (insert-collection url api-key)))))))
 
 ;; Utility function to insert a document into Typesense
-(defn insert-to-typesense [collection event]
-  (let [url (str typesense-url "/collections/" collection "/documents?dirty_values=drop&action=upsert")
+(defn insert-to-typesense [collection event url api-key]
+  (let [url (str url "/collections/" collection "/documents?dirty_values=drop&action=upsert")
         doc (nostr/convert-30142-to-nostr-amb event false)]
     (http/post url
                {:body (json/encode doc)
-                :headers {"X-TYPESENSE-API-KEY" typesense-api-key
+                :headers {"X-TYPESENSE-API-KEY" api-key
                           "Content-Type" "application/json"}}
                (fn [{:keys [status headers body error opts]}]
                  (if error
-                   (println "Failed, error is: ")
+                   (println "Failed, error is: " error)
                    (println "Status " status "ID:" (:id doc)))))))
 
-(defrecord Typesense []
+(defrecord Typesense [config]
   component/Lifecycle
   (start [component]
     (println ";; Starting Typesense Connection")
-    (assoc component :typesense typesense-url)
-    (check-for-schema))
+    (println ";; config " config)
+    (check-for-schema (:url config) (:api-key config))
+    (assoc component
+           :url (:url config)
+           :api-key (:api-key config)))
 
   (stop [component]
     (println ";; Stopping Typesense")
     (assoc component :typesense nil)))
 
-(defn new-typesense-component []
-  (map->Typesense {}))
+(defn new-typesense-component [config]
+  (map->Typesense {:config config}))
 

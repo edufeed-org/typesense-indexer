@@ -1,75 +1,73 @@
 (ns typesense-indexer.components.websocket
-  (:require [hato.websocket :as ws]
-            [com.stuartsierra.component :as component]
-            [cheshire.core :as json]
+  (:require [com.stuartsierra.component :as component]
             [typesense-indexer.components.typesense :as typesense]
-            [nostr.core :as nostr])
-  (:import [java.nio CharBuffer]))
+            [clojure.core.async :as async :refer [chan go-loop alts! go >! <!! <! take!]]
+            [nostr.core :as nostr]))
 
-(defn init-request-30142 [wc last-event newest-event reason]
+(defn init-request-30142 [ws last-event newest-event reason]
+  (println "init request with reason" reason)
   (case reason
     "eose" (do
-             (nostr/send! wc ["CLOSE" "RAND"])
-             (nostr/send! wc ["REQ" "RANDNEW" {:kinds [30142]
-                                               :since (:created_at @newest-event)}]))
-    "reconnect" (nostr/send! wc ["REQ" "RAND" {:kinds [1]
-                                               :limit 4
-                                               :until (:created_at @last-event)}])
-    "init" (nostr/send! wc ["REQ" "RAND" {:kinds [30142]
-                                          :limit 6000}])))
+             (nostr/unsubscribe ws {:kinds [30142]
+                                    :limit 6})
+             (nostr/subscribe  ws  {:kinds [30142]
+                                    :since (:created_at @newest-event)}))
+    "reconnect" (nostr/subscribe ws  {:kinds [1]
+                                      :limit 4
+                                      :until (:created_at @last-event)})
+    "init" (nostr/subscribe ws {:kinds [30142]
+                                :limit 6})))
 
-(defn on-message-handler [ws parsed last-parsed-event newest-event]
-  (let [event (nth parsed 2 nil)]
-    (println (first parsed) (:id event))
-    (when (and (= "EOSE" (first parsed))
-               (not= (:created_at @last-parsed-event) (:created_at @newest-event)))
-      (init-request-30142 ws last-parsed-event newest-event "eose"))
-    (when (> (:created_at event) (or (:created_at @newest-event) 0))
-      (reset! newest-event event))
-    (when (= "EVENT" (first parsed))
-      (do
-        (typesense/insert-to-typesense "amb" event)
-        (reset! last-parsed-event event)))))
+(defn on-message-handler [ws parsed last-parsed-event newest-event typesense]
+  (try
+    (let [event (nth parsed 2 parsed)]
+      (when (and (= "EOSE" (first parsed))
+                 (not= (:created_at @last-parsed-event) (:created_at @newest-event)))
+        (init-request-30142 ws last-parsed-event newest-event "eose"))
+      (when (> (get event :created_at 0) (get @newest-event :created_at 0))
+        (reset! newest-event event))
+      (when (= "EVENT" (first parsed))
+        (do
+          (typesense/insert-to-typesense "amb" event (:url typesense) (:api-key typesense))
+          (reset! last-parsed-event event))))
+    (catch Exception e
+      (println "error parsing event" parsed
+               "\n Error: "
+               e))))
 
-(defn create-websocket [url on-close-handler last-parsed-event newest-event]
-  (nostr/connect url
-                 {:on-open-handler (fn [ws] (println "Opened connection to url " url))
-                  :on-message-handler (fn [ws msg] (on-message-handler ws msg last-parsed-event newest-event))
-                  :on-close-handler (fn [ws status reason] (on-close-handler status))}))
-
-(defrecord WebsocketConnection [url connection]
+(defrecord WebsocketConnection [config
+                                ws channel shutdown
+                                typesense]
   component/Lifecycle
   (start [component]
     (println ";; Starting WebsocketConnection")
+    (println ";; typesense" typesense)
     (let [last-parsed-event (atom {:created_at nil})
-          newest-event (atom nil)
-          reconnect (fn reconnect [status]
-                      (println "Lost connection, attempting reconnect for: " url)
-                      (when (= 1006 status)
-                        (try
-                          (Thread/sleep 3000)
-                          (when-not (:connection component)
-                            (let [wc (create-websocket url reconnect last-parsed-event newest-event)]
-                              (assoc component :connection wc)
-                              (init-request-30142 wc last-parsed-event newest-event "reconnect")))
-                          (catch Exception e
-                            (println "Reconnect failed for " url ":" (.getMessage e))
-                            (reconnect status)))))]
+          newest-event (atom nil)]
       (try
-        (let [wc (create-websocket url reconnect last-parsed-event newest-event)]
-          (init-request-30142 wc last-parsed-event newest-event "init")
-          (assoc component :connection wc))
+        (let [{:keys [ws channel]} (nostr/connect-channel (:url config))]
+          (init-request-30142 ws last-parsed-event newest-event "init")
+          (go-loop []
+            (when-some [message (<! channel)]
+              (on-message-handler ws message last-parsed-event newest-event typesense)
+              (recur)))
 
+          (assoc component
+                 :ws ws
+                 :channel channel
+                 :shutdown (promise)))
         (catch Exception e
-          (println "Failed to start connection for " url)
-          (reconnect 1006)))))
+          (println "Failed to start connection for " (:url config) "Error: " e))))) ;; 1006 means "abnormal closure"
 
   (stop [component]
-    (println ";; Stopping WebsocketConnection for url " url)
-    (when-let [wc (:connection component)]
-      (nostr/close! wc))
-    (assoc component :connection nil)))
+    (println ";; Stopping WebsocketConnection for url" (:url config))
+    (when-let [ws (:ws component)]
+      ;; Signal any ongoing loops to stop
+      (when-let [shutdown (:shutdown component)]
+        (deliver shutdown true))
+      (nostr/close! ws)) ;; Close the WebSocket connection
+    (assoc component :ws nil :channel nil :shutdown nil)))
 
-(defn new-websocket-connection [url]
-  (map->WebsocketConnection {:url url}))
+(defn new-websocket-connection [config]
+  (component/using (map->WebsocketConnection {:config config }) [:typesense]))
 
