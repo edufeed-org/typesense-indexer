@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 RUN clojure -T:build uber
 
 # Stage 2: Run the Uberjar in a minimal image
-FROM openjdk:17-jdk-slim
+FROM openjdk:23-jdk-slim
 
 # Set environment variables
 ENV APP_HOME=/usr/src/app

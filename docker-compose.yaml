@@ -1,0 +1,10 @@
+services:
+  indexer:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    environment:
+      RELAY_URL: "${RELAY_URL}"
+      TS_URL: "${TS_URL}"
+      TS_KEY: "${TS_KEY}"
+

@@ -9,14 +9,14 @@
   (case reason
     "eose" (do
              (nostr/unsubscribe ws {:kinds [30142]
-                                    :limit 6})
+                                    :limit 10000})
              (nostr/subscribe  ws  {:kinds [30142]
                                     :since (:created_at @newest-event)}))
     "reconnect" (nostr/subscribe ws  {:kinds [1]
-                                      :limit 4
+                                      :limit 10000
                                       :until (:created_at @last-event)})
     "init" (nostr/subscribe ws {:kinds [30142]
-                                :limit 6})))
+                                :limit 10000})))
 
 (defn on-message-handler [ws parsed last-parsed-event newest-event typesense]
   (try
@@ -41,11 +41,11 @@
   component/Lifecycle
   (start [component]
     (println ";; Starting WebsocketConnection")
-    (println ";; typesense" typesense)
+    (println ";; Websocket config" config)
     (let [last-parsed-event (atom {:created_at nil})
           newest-event (atom nil)]
       (try
-        (let [{:keys [ws channel]} (nostr/connect-channel (:url config))]
+        (let [{:keys [ws channel]} (nostr/connect (:url config))]
           (init-request-30142 ws last-parsed-event newest-event "init")
           (go-loop []
             (when-some [message (<! channel)]

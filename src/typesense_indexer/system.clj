@@ -1,4 +1,5 @@
 (ns typesense-indexer.system
+  (:gen-class)
   (:require [com.stuartsierra.component :as component]
             [typesense-indexer.config :as config]
             [typesense-indexer.components.websocket :as ws]
